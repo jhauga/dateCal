@@ -1,0 +1,27 @@
+{
+  "name": "datecal",
+  "version": "1.0.0",
+  "description": "Calculate a date relative to today's date",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "datecal": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/cli.js",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "date",
+    "calendar",
+    "date-calculator",
+    "cli"
+  ],
+  "author": "John Haugabook",
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "@types/node": "^20.11.0"
+  }
+}
