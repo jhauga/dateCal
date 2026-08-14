@@ -1,0 +1,83 @@
+"use strict";
+
+const { test } = require("node:test");
+const assert = require("node:assert");
+const { spawnSync } = require("node:child_process");
+const path = require("node:path");
+const lib = require("../../dist/index.js");
+
+const CLI = path.join(__dirname, "..", "..", "dist", "cli.js");
+
+function run(args) {
+  return spawnSync(process.execPath, [CLI, ...args], { encoding: "utf8" });
+}
+
+function ok(args) {
+  const result = run(args);
+  assert.strictEqual(result.status, 0, `expected exit 0, got ${result.status}: ${result.stderr}`);
+  return result.stdout.trim();
+}
+
+test("two digit-syntax dates", () => {
+  assert.strictEqual(ok(["8-24-26", "11-22-26"]), "2 months 29 days");
+  assert.strictEqual(ok(["8/24/26", "11/22/26"]), "2 months 29 days");
+  assert.strictEqual(ok(["08.24.26", "11/22/26"]), "2 months 29 days");
+  assert.strictEqual(ok(["8,24,1926", "11;22;26"]), "100 years 2 months 29 days");
+});
+
+test("two quoted stringed dates", () => {
+  assert.strictEqual(ok(["August 24 2026", "November 22 2026"]), "2 months 29 days");
+});
+
+test("mixed digit and stringed dates", () => {
+  assert.strictEqual(ok(["8-24-26", "November 22 2026"]), "2 months 29 days");
+});
+
+test("date plus days prints the resulting date", () => {
+  assert.strictEqual(ok(["8-24-26", "90"]), "November, 22 2026");
+  assert.strictEqual(ok(["August 24 2026", "90"]), "November, 22 2026");
+});
+
+test("unquoted single date compares against today", () => {
+  const today = new Date();
+  const expected = lib.formatDuration(lib.diffDates(lib.parseDate("August 24 2026", today), today));
+  assert.strictEqual(ok(["August", "24", "2026"]), expected);
+});
+
+test("month with a date joins into one date", () => {
+  const today = new Date();
+  const expected = lib.formatDuration(lib.diffDates(lib.parseDate("August 24", today), today));
+  assert.strictEqual(ok(["August", "24"]), expected);
+});
+
+test("bare month and end-of-month forms", () => {
+  const today = new Date();
+  const first = lib.formatDuration(lib.diffDates(lib.parseDate("8", today), today));
+  const last = lib.formatDuration(lib.diffDates(lib.parseDate("8:e", today), today));
+  assert.strictEqual(ok(["8"]), first);
+  assert.strictEqual(ok(["Auguste"]), last);
+  assert.strictEqual(ok(["August", "e"]), last);
+  assert.strictEqual(ok(["August", "-e"]), last);
+  assert.strictEqual(ok(["8:e"]), last);
+});
+
+test("verbose flag forces all duration groups", () => {
+  assert.strictEqual(ok(["--verbose", "8-24-26", "11-22-26"]), "0 years 2 months 29 days");
+  assert.strictEqual(ok(["-v", "8-24-26", "11-22-26"]), "0 years 2 months 29 days");
+});
+
+test("version flag prints the version", () => {
+  assert.match(ok(["--version"]), /^2\.0\.0$/);
+});
+
+test("help flag prints usage", () => {
+  assert.match(ok(["--help"]), /Usage: datecal/);
+});
+
+test("invalid input exits with an error", () => {
+  for (const args of [["13-1-1"], ["February 30 2026"], ["8*24*26"], ["notadate"]]) {
+    const result = run(args);
+    assert.strictEqual(result.status, 1, `expected exit 1 for ${args.join(" ")}`);
+    assert.match(result.stderr, /Error:/);
+  }
+});

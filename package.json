@@ -1,21 +1,32 @@
 {
   "name": "datecal",
-  "version": "1.0.0",
-  "description": "Calculate a date relative to today's date",
+  "version": "2.0.0",
+  "description": "Calculate the duration between dates, or a date relative to today",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
     "datecal": "dist/cli.js"
   },
+  "files": [
+    "dist",
+    "logo.png"
+  ],
   "scripts": {
     "build": "tsc",
     "start": "node dist/cli.js",
+    "pretest": "npm run build",
+    "test": "node --test \"tests/**/*.test.cjs\"",
+    "test:unit": "npm run build && node --test \"tests/unit/*.test.cjs\"",
+    "test:integration": "npm run build && node --test \"tests/integration/*.test.cjs\"",
+    "test:regression": "npm run build && node --test \"tests/regression/*.test.cjs\"",
     "prepublishOnly": "npm run build"
   },
   "keywords": [
     "date",
     "calendar",
     "date-calculator",
+    "date-difference",
+    "duration",
     "cli"
   ],
   "author": "John Haugabook",
