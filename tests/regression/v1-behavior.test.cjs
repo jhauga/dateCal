@@ -29,11 +29,24 @@ test("dateCal(days) still returns a date relative to today", () => {
   assert.strictEqual(dateCal(365), v1Expected(365));
 });
 
-test("CLI keeps day-offset behavior for numbers outside 1-12", () => {
-  for (const days of [100, 365, -10, 13]) {
+test("dateCal(days) delegation matches the v1 output format byte for byte", () => {
+  assert.strictEqual(dateCal(8), v1Expected(8));
+  assert.strictEqual(dateCal(-8), v1Expected(-8));
+});
+
+test("CLI restores day-offset behavior for every bare integer", () => {
+  for (const days of [1, 8, 12, 100, 365, -8, -10, 13]) {
     const result = run([String(days)]);
     assert.strictEqual(result.status, 0, result.stderr);
     assert.strictEqual(result.stdout.trim(), v1Expected(days));
+  }
+});
+
+test("negative integers pass the flag parser, with and without --", () => {
+  for (const args of [["-8"], ["--", "-8"]]) {
+    const result = run(args);
+    assert.strictEqual(result.status, 0, result.stderr);
+    assert.strictEqual(result.stdout.trim(), v1Expected(-8));
   }
 });
 

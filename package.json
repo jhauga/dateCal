@@ -1,6 +1,6 @@
 {
   "name": "datecal",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "description": "Calculate the duration between dates, or a date relative to today",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -31,6 +31,9 @@
   ],
   "author": "John Haugabook",
   "license": "MIT",
+  "dependencies": {
+    "daycal": "^1.1.0"
+  },
   "devDependencies": {
     "typescript": "^5.4.0",
     "@types/node": "^20.11.0"

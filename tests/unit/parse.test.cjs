@@ -49,7 +49,15 @@ test("year omitted implies the current year", () => {
 
 test("date omitted implies the first of the month", () => {
   assert.deepStrictEqual(parseDate("August", TODAY), { year: 2026, month: 8, day: 1 });
-  assert.deepStrictEqual(parseDate("8", TODAY), { year: 2026, month: 8, day: 1 });
+  assert.deepStrictEqual(parseDate("_August", TODAY), { year: 2026, month: 8, day: 1 });
+  assert.deepStrictEqual(parseDate("_8", TODAY), { year: 2026, month: 8, day: 1 });
+});
+
+test("bare integers are day offsets, not dates, and throw", () => {
+  assert.throws(() => parseDate("8", TODAY), DateCalError);
+  assert.throws(() => parseDate("1", TODAY), DateCalError);
+  assert.throws(() => parseDate("12", TODAY), DateCalError);
+  assert.throws(() => parseDate("100", TODAY), DateCalError);
 });
 
 test("end specifier implies the last day of the month", () => {
@@ -57,21 +65,54 @@ test("end specifier implies the last day of the month", () => {
   assert.deepStrictEqual(parseDate("Auguste", TODAY), endOfAugust);
   assert.deepStrictEqual(parseDate("August e", TODAY), endOfAugust);
   assert.deepStrictEqual(parseDate("August:e", TODAY), endOfAugust);
-  assert.deepStrictEqual(parseDate("8:e", TODAY), endOfAugust);
-  assert.deepStrictEqual(parseDate("8-e", TODAY), endOfAugust);
+  assert.deepStrictEqual(parseDate("August_", TODAY), endOfAugust);
+  assert.deepStrictEqual(parseDate("8_", TODAY), endOfAugust);
 });
 
 test("end specifier respects 30-day months", () => {
   assert.deepStrictEqual(parseDate("September e", TODAY), { year: 2026, month: 9, day: 30 });
-  assert.deepStrictEqual(parseDate("4:e", TODAY), { year: 2026, month: 4, day: 30 });
+  assert.deepStrictEqual(parseDate("4_", TODAY), { year: 2026, month: 4, day: 30 });
   assert.deepStrictEqual(parseDate("June e", TODAY), { year: 2026, month: 6, day: 30 });
-  assert.deepStrictEqual(parseDate("11:e", TODAY), { year: 2026, month: 11, day: 30 });
+  assert.deepStrictEqual(parseDate("11_", TODAY), { year: 2026, month: 11, day: 30 });
 });
 
 test("end specifier respects February and leap years", () => {
-  assert.deepStrictEqual(parseDate("2:e", { year: 2024, month: 1, day: 1 }), { year: 2024, month: 2, day: 29 });
-  assert.deepStrictEqual(parseDate("2:e", TODAY), { year: 2026, month: 2, day: 28 });
+  assert.deepStrictEqual(parseDate("2_", { year: 2024, month: 1, day: 1 }), { year: 2024, month: 2, day: 29 });
+  assert.deepStrictEqual(parseDate("2_", TODAY), { year: 2026, month: 2, day: 28 });
   assert.deepStrictEqual(parseDate("Februarye", { year: 2000, month: 1, day: 1 }), { year: 2000, month: 2, day: 29 });
+});
+
+test("sigil months resolve to the first or last day", () => {
+  assert.deepStrictEqual(parseDate("_2", TODAY), { year: 2026, month: 2, day: 1 });
+  assert.deepStrictEqual(parseDate("_December", TODAY), { year: 2026, month: 12, day: 1 });
+  assert.deepStrictEqual(parseDate("December_", TODAY), { year: 2026, month: 12, day: 31 });
+  assert.deepStrictEqual(parseDate("_Aug", TODAY), { year: 2026, month: 8, day: 1 });
+});
+
+test("a sigil is only valid on a token with no other separator", () => {
+  assert.throws(() => parseDate("_8_24_26", TODAY), DateCalError);
+  assert.throws(() => parseDate("8_24_26_", TODAY), DateCalError);
+  assert.throws(() => parseDate("_8-24", TODAY), DateCalError);
+  assert.throws(() => parseDate("_8_", TODAY), DateCalError);
+  assert.throws(() => parseDate("_", TODAY), DateCalError);
+  assert.throws(() => parseDate("_13", TODAY), DateCalError);
+  assert.throws(() => parseDate("_notamonth", TODAY), DateCalError);
+});
+
+test("underscore stays a valid interior separator", () => {
+  assert.deepStrictEqual(parseDate("8_24_26", TODAY), { year: 2026, month: 8, day: 24 });
+  assert.deepStrictEqual(parseDate("8_24", TODAY), { year: 2026, month: 8, day: 24 });
+});
+
+test("digit end-of-month forms are removed and throw", () => {
+  assert.throws(() => parseDate("8:e", TODAY), DateCalError);
+  assert.throws(() => parseDate("8-e", TODAY), DateCalError);
+  assert.throws(() => parseDate("8.24.e", TODAY), DateCalError);
+});
+
+test("trailing separators on digit dates throw", () => {
+  assert.throws(() => parseDate("8-", TODAY), DateCalError);
+  assert.throws(() => parseDate("8-24-26-", TODAY), DateCalError);
 });
 
 test("June parses as the month, not Jun plus end specifier", () => {
@@ -90,7 +131,7 @@ test("sloppy order with 4-digit year", () => {
 });
 
 test("invalid month number throws", () => {
-  assert.throws(() => parseDate("13", TODAY), DateCalError);
+  assert.throws(() => parseDate("13-1", TODAY), DateCalError);
   assert.throws(() => parseDate("0-24-26", TODAY), DateCalError);
 });
 

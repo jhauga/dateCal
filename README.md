@@ -27,7 +27,11 @@ datecal <days>
 | Two dates | Duration between the dates (e.g. `2 months 29 days`) |
 | One date | Duration between the date and today |
 | One date and a number | The date that many days after (or before, if negative) the date |
-| One number outside 1-12 | The date that many days from today |
+| One number | The date that many days from today (`datecal 8`, `datecal -8`) |
+
+A bare number is **always** a day offset from today, exactly as in 1.x. To
+name a month by its number, use the `_` sigil: `_8` is August 1 and `8_` is
+August 31.
 
 ### Date Formats
 
@@ -39,10 +43,16 @@ Dates can be written in a stringed syntax or a digit syntax:
 | Abbreviated month | `Aug. 24 26` | Abbreviation ends with a period; year can be 2 or 4 digits |
 | Digits with separators | `8-24-26`, `8/24/2026`, `08.24.26` | Order is month, date, year; any of `, . ; : ' - _ @ # \ / +` separate |
 | Ordinal dates | `"20th 26 August"` | Ordinals and 4-digit years let parts appear in any order |
-| Month only | `August`, `8` | Implies the 1st of the month |
-| Month with end specifier | `Auguste`, `August e`, `8:e` | Implies the last day of the month (30/31, and 28 or 29 for February on leap years) |
+| Month only | `August`, `_August`, `_8` | Implies the 1st of the month; digit months require the leading `_` sigil |
+| Month with end specifier | `8_`, `August_`, `Auguste`, `August e` | Implies the last day of the month (30/31, and 28 or 29 for February on leap years) |
 
 Omitted years imply the current year. Two-digit years resolve to the 2000s.
+
+**The sigil rule is strict**: a leading or trailing `_` is a month sigil
+*only* when the token contains no other separator character. `_` remains a
+valid interior separator, so `8_24_26` parses as a full date, while
+`_8_24_26` and `8_24_26_` are errors. The digit end-of-month form `8:e` was
+removed; use `8_` or the word forms instead.
 
 ### Examples
 
@@ -55,11 +65,35 @@ datecal "August 24 2026" "November 22 2026"
 datecal 8-24-26 11-22-26
 # 2 months 29 days
 
+datecal -d 8-24-26 11-22-26
+# 90 days
+
+datecal -m 8-24-26 11-22-26
+# 2.94 months
+
+datecal -y 8-24-26 11-22-26
+# 0.25 years
+
 datecal 08-24-1926 11-22-26
 # 100 years 2 months 29 days
 
+datecal -y 08-24-1926 11-22-26
+# 100.25 years
+
 datecal August 24 2026
 # 10 days
+
+datecal 8
+# August, 22 2026     (8 days from today)
+
+datecal -8
+# August, 06 2026     (8 days before today)
+
+datecal _8
+# 13 days             (duration until August 1)
+
+datecal 8_
+# 17 days             (duration until August 31)
 
 datecal Auguste
 # 17 days
@@ -76,8 +110,20 @@ datecal 100
 | Option | Description |
 | --- | --- |
 | `-v, --verbose` | Always print years, months, and days (e.g. `0 years 2 months 29 days`) |
+| `-d, --days` | Print durations in whole days (e.g. `90 days`) |
+| `-m, --months` | Print durations in months; under a whole month a two-decimal value is used (e.g. `0.25 months`) |
+| `-y, --years` | Print durations in years; under a whole year a two-decimal value is used (e.g. `100.25 years`) |
 | `-V, --version` | Print the version number |
 | `-h, --help` | Show usage help |
+| `--` | Treat every following argument as a date or number |
+
+Like `--verbose`, the unit flags only shape duration output and are ignored
+when the result is a date. A unit flag takes precedence over `--verbose`, and
+when several unit flags are given the last one wins. Fractions are
+calendar-aware: the leftover days are measured against the actual month or
+year they fall in, so 7 days is `0.25 months` in a 28-day February but
+`0.24 months` in a leap one. Days never need fractions, because dates differ
+by whole days.
 
 ## Programmatic Usage
 
@@ -88,6 +134,7 @@ dateCal("8-24-26", "11-22-26");   // "2 months 29 days"
 dateCal("August 24 2026");        // duration from today, e.g. "10 days"
 dateCal("8-24-26", 90);           // "November, 22 2026"
 dateCal(10);                      // the date 10 days from today
+dateCal("8-24-26", "11-22-26", { unit: "months" });  // "2.94 months"
 ```
 
 ### API
@@ -103,12 +150,22 @@ The main entry point. Behavior depends on the arguments:
 | `dateCal(from: string, to: string)` | Duration between the two dates |
 | `dateCal(from: string, days: number)` | Date `days` after `from`, formatted `"Month, DD YYYY"` |
 
+The `dateCal(days: number)` calculation is delegated to the
+[daycal](https://www.npmjs.com/package/daycal) package, the canonical home of
+the day-offset calculation. When the `today` option is passed, the date is
+computed locally instead, because daycal takes no reference-date override --
+the option is honored either way.
+
+Note that a bare integer *string* (`dateCal("8")`) is not a date and throws:
+pass day offsets as numbers, and name months with the `_8` / `8_` sigils.
+
 **Options** (last argument):
 
 | Option | Type | Description |
 | --- | --- | --- |
 | `verbose` | `boolean` | Always include years, months, and days in duration output |
 | `today` | `Date \| CalendarDate` | Reference date used as "today" (defaults to the system date) |
+| `unit` | `"days" \| "months" \| "years"` | Report durations in a single unit; months and years use a two-decimal fraction below a whole unit. Takes precedence over `verbose` |
 
 **Throws:** `DateCalError` when a date expression cannot be parsed or is invalid
 (unknown month, day outside the month's length, illegal separator, or an
@@ -144,15 +201,26 @@ Durations drop leading zero groups by default:
 100 years 2 months 29 days
 ```
 
-With `--verbose` (or `verbose: true`), all three groups always print. Dates are
-returned in the `Month, DD YYYY` format (e.g. `November, 22 2026`).
+With `--verbose` (or `verbose: true`), all three groups always print. With a
+unit flag (or the `unit` option), the duration prints in that single unit,
+using a two-decimal fraction for months and years below a whole unit
+(`0.25 years`). Dates are returned in the `Month, DD YYYY` format
+(e.g. `November, 22 2026`).
 
-## Upgrading from 1.x
+## Upgrading from 2.x
 
-The CLI meaning of a single number from 1 to 12 changed: `datecal 8` now reads
-as the month of August and prints the duration until August 1, instead of the
-date 8 days from today. Numbers outside 1-12 keep the 1.x day-offset behavior.
-The programmatic `dateCal(days: number)` call is unchanged.
+The 1.x behavior for bare numbers is **restored**: every bare integer is a day
+offset from today again, so `datecal 8` prints the date 8 days away. The 2.0.0
+reading of a single number 1-12 as a month is gone.
+
+To name a month by number, use an explicit sigil: `_8` for August 1 and `8_`
+for August 31 (leap-aware for February). The sigils also work on names
+(`_August`, `August_`). A leading or trailing `_` is a sigil only on a token
+with no other separator, so `8_24_26` still parses as a full date while
+`_8_24_26` and `8_24_26_` are errors.
+
+The digit end-of-month form `8:e` is removed; use `8_` or the word forms
+(`Auguste`, `August e`), which are unchanged.
 
 ## Build and Test
 

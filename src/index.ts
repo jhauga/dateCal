@@ -6,7 +6,15 @@
  *   e.g. "August 24 2026", "Aug. 24 26", "20th 26 August".
  * - Digit syntax: month, date, and year digits joined by punctuation,
  *   e.g. "8-24-26", "8/24/2026", "08.24.26".
+ *
+ * A bare integer is never a date: it is a day offset from today. Digit months
+ * need an explicit sigil: "_8" is the first day of August, "8_" the last. The
+ * sigil also works on month names ("_August", "August_"). A leading or
+ * trailing "_" is a sigil only when the token contains no other separator, so
+ * "8_24_26" stays a full date while "_8_24_26" and "8_24_26_" are errors.
  */
+
+import { dayCal } from "daycal";
 
 const MS_PER_DAY = 86_400_000;
 
@@ -24,12 +32,21 @@ export interface Duration {
   days: number;
 }
 
+/** Unit a duration can be reported in with the {@link DateCalOptions.unit} option. */
+export type DurationUnit = "days" | "months" | "years";
+
 /** Options accepted by {@link dateCal}. */
 export interface DateCalOptions {
   /** Always output the full "N years N months N days" form. */
   verbose?: boolean;
   /** Reference date used as "today". Defaults to the current system date. */
   today?: Date | CalendarDate;
+  /**
+   * Report durations in a single unit. Days are always whole; months and
+   * years use a two-decimal fraction below a whole unit (e.g. "0.25 years"
+   * for a quarter of a year). Takes precedence over {@link verbose}.
+   */
+  unit?: DurationUnit;
 }
 
 /** Error thrown for unparseable or invalid date input. */
@@ -190,6 +207,42 @@ export function formatDuration(duration: Duration, verbose = false): string {
   return days;
 }
 
+function formatUnitValue(value: number, unit: DurationUnit): string {
+  // Round to two decimals; String() drops trailing zeros ("0.25", "2.94", "3").
+  const rounded = Math.round(value * 100) / 100;
+  const singular = unit.slice(0, -1);
+  return `${rounded} ${rounded === 1 ? singular : unit}`;
+}
+
+/**
+ * Expresses the span between two dates in a single unit. Days are exact whole
+ * numbers. Months and years count whole calendar units the same way
+ * {@link diffDates} does, then turn the leftover days into a fraction of the
+ * actual next month or year, so the result stays calendar- and leap-aware.
+ */
+function diffInUnit(a: CalendarDate, b: CalendarDate, unit: DurationUnit): string {
+  let from = a;
+  let to = b;
+  if (toUtcMs(from) > toUtcMs(to)) {
+    [from, to] = [to, from];
+  }
+
+  if (unit === "days") {
+    return formatUnitValue(Math.round((toUtcMs(to) - toUtcMs(from)) / MS_PER_DAY), unit);
+  }
+
+  const monthsPerStep = unit === "months" ? 1 : 12;
+  let steps = Math.floor(((to.year - from.year) * 12 + (to.month - from.month)) / monthsPerStep);
+  while (steps > 0 && toUtcMs(addMonths(from, steps * monthsPerStep)) > toUtcMs(to)) {
+    steps--;
+  }
+  const anchor = addMonths(from, steps * monthsPerStep);
+  const next = addMonths(anchor, monthsPerStep);
+  const fraction = (toUtcMs(to) - toUtcMs(anchor)) / (toUtcMs(next) - toUtcMs(anchor));
+
+  return formatUnitValue(steps + fraction, unit);
+}
+
 interface MonthMatch {
   month: number;
   endOfMonth: boolean;
@@ -236,14 +289,59 @@ function matchMonthToken(token: string): MonthMatch | null {
 
 /**
  * Returns true when the token is a bare month on its own: a month name or
- * abbreviation ("August", "Aug."), or a month number 1-12 with no separators.
+ * abbreviation ("August", "Aug.", "Auguste"). Bare numbers are day offsets,
+ * not months, and sigil forms ("_8", "8_") are complete dates, so neither
+ * counts as a month expression.
  */
 export function isMonthExpression(token: string): boolean {
-  if (INTEGER.test(token)) {
-    const n = parseInt(token, 10);
-    return n >= 1 && n <= 12;
-  }
   return matchMonthToken(token) !== null;
+}
+
+/**
+ * Resolves a month sigil token: a leading "_" means the first day of the
+ * month ("_8", "_August") and a trailing "_" means the last day ("8_",
+ * "August_"), leap-aware for February. The "_" is a sigil only when the rest
+ * of the token contains no separator character; otherwise the token is a
+ * malformed date and a specific error is thrown so callers fail gracefully.
+ * Returns null when the token carries no leading or trailing "_" at all.
+ */
+function parseSigilToken(token: string, today: CalendarDate): CalendarDate | null {
+  const leading = token.startsWith("_");
+  const trailing = token.length > 1 && token.endsWith("_");
+  if (!leading && !trailing) {
+    return null;
+  }
+
+  const inner = token.slice(leading ? 1 : 0, trailing ? token.length - 1 : token.length);
+  if (DIGIT_SEPARATOR.test(inner)) {
+    throw new DateCalError(
+      "INVALID_SIGIL",
+      `Cannot parse "${token}". A leading or trailing _ is a month sigil only on a plain month ` +
+        `token (e.g. _8 or 8_); separated dates keep separators interior (e.g. 8_24_26).`
+    );
+  }
+  if (leading && trailing) {
+    throw new DateCalError(
+      "INVALID_SIGIL",
+      `Cannot parse "${token}". Use a leading _ for the first day of the month or a trailing _ ` +
+        `for the last day, not both.`
+    );
+  }
+  if (inner === "") {
+    throw new DateCalError("INVALID_SIGIL", `Cannot parse "${token}". Expected _month or month_.`);
+  }
+
+  const month = INTEGER.test(inner)
+    ? validateMonth(parseInt(inner, 10), token)
+    : matchMonthName(inner.toLowerCase());
+  if (month === null) {
+    throw new DateCalError(
+      "INVALID_SIGIL",
+      `Cannot parse "${token}". Expected _month or month_ with a month number 1-12 or a month name.`
+    );
+  }
+
+  return { year: today.year, month, day: trailing ? daysInMonth(month, today.year) : 1 };
 }
 
 function normalizeYear(raw: string): number {
@@ -288,11 +386,21 @@ function parseDigitExpression(token: string, today: CalendarDate): CalendarDate 
     );
   }
 
+  if (DIGIT_SEPARATOR.test(token[token.length - 1])) {
+    throw new DateCalError(
+      "TRAILING_SEPARATOR",
+      `Cannot parse "${token}". Separators join date parts and cannot end a date; for the last ` +
+        `day of a month use a bare trailing _ (e.g. 8_).`
+    );
+  }
+
   const parts = token.split(DIGIT_SEPARATOR).filter((part) => part !== "");
-  let endOfMonth = false;
   if (parts.length > 0 && parts[parts.length - 1].toLowerCase() === "e") {
-    endOfMonth = true;
-    parts.pop();
+    throw new DateCalError(
+      "DIGIT_END_REMOVED",
+      `Cannot parse "${token}". The digit end-of-month form (8:e) was removed; use a trailing _ ` +
+        `(e.g. 8_) or the word forms "Auguste" / "August e".`
+    );
   }
 
   if (parts.length < 1 || parts.length > 3 || !parts.every((part) => INTEGER.test(part))) {
@@ -306,7 +414,7 @@ function parseDigitExpression(token: string, today: CalendarDate): CalendarDate 
   const day = parts.length >= 2 ? parseInt(parts[1], 10) : undefined;
   const year = parts.length === 3 ? normalizeYear(parts[2]) : today.year;
 
-  return { year, month, day: resolveDay(day, month, year, endOfMonth) };
+  return { year, month, day: resolveDay(day, month, year, false) };
 }
 
 function parseStringedExpression(tokens: string[], today: CalendarDate): CalendarDate {
@@ -383,10 +491,14 @@ function parseStringedExpression(tokens: string[], today: CalendarDate): Calenda
  * Parses a date expression into a calendar date.
  *
  * Accepts stringed syntax ("August 24 2026", "Aug. 24", "Auguste", "August e",
- * "20th 26 August") and digit syntax ("8-24-26", "8/24/2026", "8:e"). Omitted
- * parts fall back to the reference date: a missing year implies the current
- * year, and a missing date implies the 1st of the month, or the last day of
- * the month when the "e" end-of-month specifier is used.
+ * "20th 26 August"), digit syntax ("8-24-26", "8/24/2026"), and month sigils
+ * ("_8", "8_", "_August", "August_"). Omitted parts fall back to the
+ * reference date: a missing year implies the current year, and a missing date
+ * implies the 1st of the month, or the last day of the month when an
+ * end-of-month form is used.
+ *
+ * A bare integer is not a date: it means a day offset from today, so it is
+ * rejected here with a hint to use the _8 / 8_ sigils for months.
  *
  * @param expression - The date expression to parse.
  * @param today - Reference date for omitted parts. Defaults to the system date.
@@ -403,9 +515,16 @@ export function parseDate(expression: string, today: Date | CalendarDate = new D
 
   if (tokens.length === 1) {
     const token = tokens[0];
+    const sigil = parseSigilToken(token, reference);
+    if (sigil !== null) {
+      return sigil;
+    }
     if (INTEGER.test(token)) {
-      const month = validateMonth(parseInt(token, 10), token);
-      return { year: reference.year, month, day: 1 };
+      throw new DateCalError(
+        "BARE_INTEGER",
+        `A bare number "${token}" is a day offset, not a date. For the month use _${token} ` +
+          `(first day) or ${token}_ (last day); for a day offset pass it as a number.`
+      );
     }
     if (/^[0-9]/.test(token)) {
       return parseDigitExpression(token, reference);
@@ -417,6 +536,9 @@ export function parseDate(expression: string, today: Date | CalendarDate = new D
 
 /**
  * Calculates a date relative to today by adding or subtracting days.
+ * Delegates to the daycal package, which is the canonical home of the
+ * day-offset calculation. When the `today` option overrides the reference
+ * date, the date is computed locally because daycal has no such override.
  * @param days - Number of days to add (positive) or subtract (negative) from today.
  * @returns Formatted date string as "Month, DD YYYY" (e.g., "March, 31 2026").
  */
@@ -456,11 +578,17 @@ export function dateCal(
     options = third ?? {};
   }
 
-  const today = toCalendarDate(options.today ?? new Date());
-
   if (typeof first === "number") {
-    return formatDate(addDays(today, first));
+    if (options.today !== undefined) {
+      // daycal@1.x cannot apply a reference-date override, so honor the
+      // documented today option locally instead of delegating and silently
+      // dropping it.
+      return formatDate(addDays(toCalendarDate(options.today), first));
+    }
+    return dayCal(first);
   }
+
+  const today = toCalendarDate(options.today ?? new Date());
 
   const base = parseDate(first, today);
 
@@ -468,7 +596,12 @@ export function dateCal(
     return formatDate(addDays(base, target));
   }
   if (typeof target === "string") {
-    return formatDuration(diffDates(base, parseDate(target, today)), options.verbose);
+    const other = parseDate(target, today);
+    return options.unit !== undefined
+      ? diffInUnit(base, other, options.unit)
+      : formatDuration(diffDates(base, other), options.verbose);
   }
-  return formatDuration(diffDates(base, today), options.verbose);
+  return options.unit !== undefined
+    ? diffInUnit(base, today, options.unit)
+    : formatDuration(diffDates(base, today), options.verbose);
 }
